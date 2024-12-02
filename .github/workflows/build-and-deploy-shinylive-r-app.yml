@@ -34,7 +34,12 @@ jobs:
           with:
             packages:
               cran::shinylive
-  
+              cran::dplyr
+              cran::ggplot2
+              cran::tidyr
+              cran::plotly
+              cran::bslib
+
         # Export the current working directory as the shiny app
         # using the pinned version of the Shinylive R package
         - name: Create Shinylive App from working directory files
