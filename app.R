@@ -41,11 +41,11 @@ ui <- page_sidebar(
                    input.tabset === 'Randomness Tests' || 
                    input.tabset === 'Successive Triplets' ",
       selectInput("rng_type", "RNG Type", 
-                 choices = c("Good RNG (runif)" = "runif", 
-                           "Good RNG (rnorm)" = "rnorm", 
-                           "Good RNG (rexp)" = "rexp",
-                           "Poor RNG (Correlated)" = "correlated",
-                           "Poor RNG (RANDU)" = "randu")),
+                 choices = c("runif (Good RNG)" = "runif", 
+                           "rnorm (Good RNG)" = "rnorm", 
+                           "rexp (Good RNG)" = "rexp",
+                           "Correlated (Poor RNG)" = "correlated",
+                           "RANDU (Poor RNG)" = "randu")),
       numericInput("n_samples", "Number of Samples", 
                   value = 1000, min = 100, max = 10000),
       conditionalPanel(
@@ -71,11 +71,12 @@ ui <- page_sidebar(
       title = "Distribution Analysis",
       card(
         card_header("About This Tab"),
-        "This tab helps you analyze the distribution of random numbers to assess their quality. A good RNG should show:",
+        "The histogram and density curve show how the random numbers are distributed. Expected patterns depend on the chosen RNG type:",
         tags$ul(
-          tags$li(strong("Uniform or Expected Distribution: "), "The histogram should match the expected probability distribution (uniform, normal, or exponential)"),
-          tags$li(strong("No Patterns in Sequence: "), "The sequence plot should show no obvious patterns or trends"),
-          tags$li(strong("Consistent Statistics: "), "Mean and standard deviation should align with theoretical values")
+          tags$li(strong("Uniform (runif): "), "Expect a flat histogram with approximately horizontal density curve"),
+          tags$li(strong("Normal (rnorm): "), "Expect a bell-shaped curve centered at 0"),
+          tags$li(strong("Exponential (rexp): "), "Expect a curve that peaks at 0 and decays exponentially"),
+          tags$li(strong("Poor RNGs: "), "May show unexpected patterns, clusters, or deviations from these expected shapes")
         ),
         "Compare the visualizations between good and poor RNGs to see the differences."
       ),
@@ -153,12 +154,19 @@ ui <- page_sidebar(
       ),
       card(
         card_header("QQ Plot"),
-        "Compares sample quantiles to theoretical quantiles:",
+        "Compares sample quantiles against theoretical quantiles. The interpretation depends on your RNG type:",
         tags$ul(
-          tags$li("Points should follow the diagonal line"),
-          tags$li("Deviations indicate departure from expected distribution"),
-          tags$li("S-shaped curves suggest skewness")
+          tags$li(strong("Uniform (runif): "), "Points should follow a straight line from (0,0) to (1,1)"),
+          tags$li(strong("Normal (rnorm): "), "Points should follow a straight line when plotted against normal quantiles"),
+          tags$li(strong("Exponential (rexp): "), "Points should follow a curved line matching exponential quantiles"),
+          tags$li(strong("Poor RNGs: "), "May show systematic deviations from expected patterns, such as:"),
+          tags$ul(
+            tags$li("S-shaped curves indicating skewness"),
+            tags$li("Curved tails indicating heavy or light tails"),
+            tags$li("Step patterns indicating discretization or clustering")
+          )
         ),
+        "Note: The grey reference line shows the ideal theoretical relationship.", 
         plotOutput("qq_plot")
       )
     ),
@@ -249,96 +257,72 @@ ui <- page_sidebar(
 )
 
 # Server logic
+# Server logic
 server <- function(input, output, session) {
-  # Reactive values for generated data
-  rv <- reactiveVal(NULL)
-  rv_3d <- reactiveVal(NULL)
-  rv_triplets <- reactiveVal(NULL)
+  # Store ALL RNG parameters in a reactive value
+  rng_params <- reactiveValues(
+    type = NULL,
+    n = NULL,
+    correlation = NULL,
+    randu_seed = NULL,
+    data = NULL,
+    triplets = NULL
+  )
+  
   
   # Generate new data when button is clicked
   observeEvent(input$generate, {
-    n <- input$n_samples
-    data <- switch(input$rng_type,
-                  "runif" = runif(n),
-                  "rnorm" = rnorm(n),
-                  "rexp" = rexp(n),
-                  "correlated" = generate_correlated_rng(n, input$correlation),
-                  "randu" = generate_randu(n, input$randu_seed))
-    rv(data)
-  })
-  
-  # Generate new data for 3D comparison
-  observeEvent(input$generate_3d, {
-    n <- input$n_samples_3d
+    # Update all parameters
+    rng_params$type <- input$rng_type
+    rng_params$n <- input$n_samples
+    rng_params$correlation <- input$correlation
+    rng_params$randu_seed <- input$randu_seed
     
-    rng1 <- switch(input$rng1_type,
-                  "runif" = runif(n),
-                  "rnorm" = rnorm(n),
-                  "rexp" = rexp(n),
-                  "correlated" = generate_correlated_rng(n, input$correlation_3d),
-                  "randu" = generate_randu(n, input$randu_seed_3d))
-    
-    rng2 <- switch(input$rng2_type,
-                  "runif" = runif(n),
-                  "rnorm" = rnorm(n),
-                  "rexp" = rexp(n),
-                  "correlated" = generate_correlated_rng(n, input$correlation_3d),
-                  "randu" = generate_randu(n, input$randu_seed_3d))
-    
-    data_3d <- data.frame(
-      x = rng1,
-      y = rng2,
-      z = 1:n,
-      time = 1:n
+    # Generate new data
+    rng_params$data <- switch(rng_params$type,
+      "runif" = runif(rng_params$n),
+      "rnorm" = rnorm(rng_params$n),
+      "rexp" = rexp(rng_params$n),
+      "correlated" = generate_correlated_rng(rng_params$n, rng_params$correlation),
+      "randu" = generate_randu(rng_params$n, rng_params$randu_seed)
     )
     
-    rv_3d(data_3d)
-  })
-
-  
-  # Generate triplets of successive numbers
-  observeEvent(input$generate, {
-    n <- input$n_samples
-    
-    # Generate initial sequence
-    data <- switch(input$rng_type,
-                  "runif" = runif(n + 2),  # Generate 2 extra for triplets
-                  "rnorm" = rnorm(n + 2),
-                  "rexp" = rexp(n + 2),
-                  "correlated" = generate_correlated_rng(n + 2, input$correlation),
-                  "randu" = generate_randu(n + 2, input$randu_seed))
-    
-    # Create triplets
-    triplets <- data.frame(
-      x = head(data, -2),
-      y = data[2:(length(data)-1)],
-      z = tail(data, -2)
+    # Generate triplets
+    data_extended <- switch(rng_params$type,
+      "runif" = runif(rng_params$n + 2),
+      "rnorm" = rnorm(rng_params$n + 2),
+      "rexp" = rexp(rng_params$n + 2),
+      "correlated" = generate_correlated_rng(rng_params$n + 2, rng_params$correlation),
+      "randu" = generate_randu(rng_params$n + 2, rng_params$randu_seed)
     )
     
-    rv_triplets(triplets)
+    rng_params$triplets <- data.frame(
+      x = head(data_extended, -2),
+      y = data_extended[2:(length(data_extended)-1)],
+      z = tail(data_extended, -2)
+    )
   })
   
-
   # Summary statistics
   output$sample_size <- renderText({
-    req(rv())
-    length(rv())
+    req(rng_params$data)
+    length(rng_params$data)
   })
   
   output$mean_value <- renderText({
-    req(rv())
-    round(mean(rv()), 4)
+    req(rng_params$data)
+    round(mean(rng_params$data), 4)
   })
   
   output$sd_value <- renderText({
-    req(rv())
-    round(sd(rv()), 4)
+    req(rng_params$data)
+    round(sd(rng_params$data), 4)
   })
   
   # Distribution plot
   output$dist_plot <- renderPlot({
-    req(rv())
-    ggplot(data.frame(x = rv()), aes(x = x)) +
+    req(rng_params$data)
+    ggplot(data.frame(x = rng_params$data), aes(x = x)) +
       geom_histogram(aes(y = ..density..), bins = 30, fill = "steelblue", alpha = 0.7) +
       geom_density(color = "red") +
       theme_minimal() +
@@ -349,10 +333,10 @@ server <- function(input, output, session) {
   
   # Sequence plot
   output$sequence_plot <- renderPlot({
-    req(rv())
+    req(rng_params$data)
     df <- data.frame(
-      index = 1:length(rv()),
-      value = rv()
+      index = 1:length(rng_params$data),
+      value = rng_params$data
     )
     ggplot(df, aes(x = index, y = value)) +
       geom_line(color = "steelblue", alpha = 0.7) +
@@ -365,58 +349,71 @@ server <- function(input, output, session) {
   
   # QQ plot
   output$qq_plot <- renderPlot({
-    req(rv())
-    ggplot(data.frame(x = rv()), aes(sample = x)) +
-      stat_qq() +
-      stat_qq_line() +
+    req(rng_params$data)
+    data <- data.frame(x = rng_params$data)
+    
+    p <- ggplot(data, aes(sample = x)) +
       theme_minimal() +
       labs(title = "Q-Q Plot",
            x = "Theoretical Quantiles",
            y = "Sample Quantiles")
-  })
     
-  # Statistical tests (continued)
+    p <- switch(rng_params$type,
+      "runif" = p + stat_qq(distribution = qunif) + 
+                stat_qq_line(distribution = qunif),
+      "rnorm" = p + stat_qq(distribution = qnorm) + 
+                stat_qq_line(distribution = qnorm),
+      "rexp" = p + stat_qq(distribution = qexp) + 
+               stat_qq_line(distribution = qexp),
+      p + stat_qq(distribution = qunif) + 
+          stat_qq_line(distribution = qunif)
+    )
+    
+    p
+  })
+  
+  # Statistical tests
   output$ks_test <- renderText({
-    req(rv())
-    test <- switch(input$rng_type,
-                  "runif" = ks.test(rv(), "punif"),
-                  "rnorm" = ks.test(rv(), "pnorm"),
-                  "rexp" = ks.test(rv(), "pexp"),
-                  "correlated" = ks.test(rv(), "punif"),
-                  "randu" = ks.test(rv(), "punif"))
+    req(rng_params$data)
+    test <- switch(rng_params$type,
+      "runif" = ks.test(rng_params$data, "punif"),
+      "rnorm" = ks.test(rng_params$data, "pnorm"),
+      "rexp" = ks.test(rng_params$data, "pexp"),
+      "correlated" = ks.test(rng_params$data, "punif"),
+      "randu" = ks.test(rng_params$data, "punif"))
     paste("p-value:", round(test$p.value, 4))
   })
   
   output$chi_test <- renderText({
-    req(rv())
-    breaks <- seq(min(rv()), max(rv()), length.out = 11)
-    observed <- table(cut(rv(), breaks))
-    expected <- rep(length(rv())/10, 10)
+    req(rng_params$data)
+    breaks <- seq(min(rng_params$data), max(rng_params$data), length.out = 11)
+    observed <- table(cut(rng_params$data, breaks))
+    expected <- rep(length(rng_params$data)/10, 10)
     test <- chisq.test(observed, p = expected/sum(expected))
     paste("p-value:", round(test$p.value, 4))
   })
   
   # Runs test
   output$runs_test <- renderText({
-    req(rv())
-    median_runs <- median(rv())
-    runs <- rle(rv() > median_runs)
+    req(rng_params$data)
+    median_runs <- median(rng_params$data)
+    runs <- rle(rng_params$data > median_runs)
     n_runs <- length(runs$lengths)
     paste("Number of runs:", n_runs)
   })
   
   # Autocorrelation plot
   output$acf_plot <- renderPlot({
-    req(rv())
-    acf(rv(), main = "Autocorrelation Function", lag.max = 20)
+    req(rng_params$data)
+    acf(rng_params$data, main = "Autocorrelation Function", lag.max = 20)
   })
   
   # Sequential scatter plot
   output$sequential_scatter <- renderPlot({
-    req(rv())
+    req(rng_params$data)
     df <- data.frame(
-      current = head(rv(), -1),
-      next_value = tail(rv(), -1)
+      current = head(rng_params$data, -1),
+      next_value = tail(rng_params$data, -1)
     )
     ggplot(df, aes(x = current, y = next_value)) +
       geom_point(alpha = 0.5, color = "steelblue") +
@@ -425,14 +422,12 @@ server <- function(input, output, session) {
            x = "Current Value",
            y = "Next Value")
   })
-
+  
   # 3D plot for triplets
   output$plot_3d <- renderPlotly({
-    req(rv_triplets())
+    req(rng_params$triplets)
     
-    data <- rv_triplets()
-    
-    plot_ly(data, x = ~x, y = ~y, z = ~z,
+    plot_ly(rng_params$triplets, x = ~x, y = ~y, z = ~z,
             type = 'scatter3d', 
             mode = 'markers',
             marker = list(
@@ -444,7 +439,7 @@ server <- function(input, output, session) {
         yaxis = list(title = "X(n+1)"),
         zaxis = list(title = "X(n+2)")
       ),
-      title = paste("Successive Triplets -", input$rng_type)) %>%
+      title = paste("Successive Triplets -", rng_params$type)) %>%
       add_annotations(
         text = "Drag to rotate. Scroll to zoom.",
         xref = "paper", yref = "paper",
@@ -452,7 +447,6 @@ server <- function(input, output, session) {
         showarrow = FALSE
       )
   })
-  
 }
 
 # Run the app
